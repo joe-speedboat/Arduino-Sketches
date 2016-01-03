@@ -1,0 +1,93 @@
+#include <SPI.h>
+#include <MySensor.h>
+#include <DHT.h>
+#include <avr/sleep.h>
+
+#define CHILD_ID_HUM 0
+#define CHILD_ID_TEMP 1
+int BATTERY_SENSE_PIN = A0;
+#define HUMIDITY_SENSOR_DIGITAL_PIN 2
+unsigned long SLEEP_TIME = 300000; // Sleep time between reads (in milliseconds)
+
+
+MySensor gw;
+DHT dht;
+float lastTemp;
+float lastHum;
+boolean metric = true;
+MyMessage msgHum(CHILD_ID_HUM, V_HUM);
+MyMessage msgTemp(CHILD_ID_TEMP, V_TEMP);
+int oldBatteryPcnt = -1;
+
+
+void setup() {
+  gw.begin();
+  dht.setup(HUMIDITY_SENSOR_DIGITAL_PIN);
+
+  // Send the Sketch Version Information to the Gateway
+  gw.sendSketchInfo("Humidity", "1.0");
+  gw.sendSketchInfo("Battery Meter", "1.0");
+
+  // Register all sensors to gw (they will be created as child devices)
+  gw.present(CHILD_ID_HUM, S_HUM);
+  gw.present(CHILD_ID_TEMP, S_TEMP);
+
+  metric = gw.getConfig().isMetric;
+
+}
+
+void loop()
+{
+  delay(dht.getMinimumSamplingPeriod());
+
+  float temperature = dht.getTemperature();
+  if (isnan(temperature)) {
+    Serial.println("Failed reading temperature from DHT");
+  } else if (temperature != lastTemp) {
+    lastTemp = temperature;
+    if (!metric) {
+      temperature = dht.toFahrenheit(temperature);
+    }
+    gw.send(msgTemp.set(temperature, 1));
+    Serial.print("T: ");
+    Serial.println(temperature);
+  }
+
+  float humidity = dht.getHumidity();
+  if (isnan(humidity)) {
+    Serial.println("Failed reading humidity from DHT");
+  } else if (humidity != lastHum) {
+    lastHum = humidity;
+    gw.send(msgHum.set(humidity, 1));
+    Serial.print("H: ");
+    Serial.println(humidity);
+  }
+   float batteryMax = 4400 ;
+   float batteryMin = 3100 ;
+   float batteryV = readVcc();
+   Serial.print("V: ");
+   Serial.println(batteryV / 1000);
+   int batteryPcnt = (batteryV - batteryMin) / (batteryMax - batteryMin) * 100  ;
+   Serial.println(batteryPcnt);
+  if (oldBatteryPcnt != batteryPcnt) {
+    gw.sendBatteryLevel(batteryPcnt);
+    oldBatteryPcnt = batteryPcnt;
+  }
+
+  gw.sleep(SLEEP_TIME); //sleep a bit
+}
+
+long readVcc() {
+  long result;
+  // Read 1.1V reference against AVcc
+  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+  delay(2); // Wait for Vref to settle
+  ADCSRA |= _BV(ADSC); // Convert
+  while (bit_is_set(ADCSRA,ADSC));
+  result = ADCL;
+  result |= ADCH<<8;
+  result = 1126400L / result; // Back-calculate AVcc in mV
+  return result;
+}
+
+
